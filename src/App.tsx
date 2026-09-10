@@ -8,13 +8,15 @@ interface ParsedItem {
   category: DeviceCategory;
   sourceKey: string;
   needsProcessor: boolean;
+  originalId: string;
+  originalDesc: string;
 }
 
 type DeviceCategory = 'iPad' | 'Apple Watch' | 'Mac';
 
 const deviceCategories: DeviceCategory[] = ['iPad', 'Apple Watch', 'Mac'];
 
-const normalizeHeader = (header: string) => header.toLowerCase().replace(/[^a-z0-9]/g, '');
+const normalizeHeader = (header: string) => header.toLowerCase().replace(/[^a-z0-9א-ת]/g, '');
 
 const parseAmount = (value: unknown) => {
   if (typeof value === 'number') return Math.floor(value);
@@ -22,6 +24,9 @@ const parseAmount = (value: unknown) => {
   const amount = Number.parseFloat(normalized);
   return Number.isFinite(amount) ? Math.floor(amount) : 0;
 };
+
+const titleCase = (value: string) =>
+  value.replace(/\s+/g, ' ').trim().replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
 
 const getDeviceCategory = (value: string): DeviceCategory | null => {
   if (/charger|cable|adapter|pencil|airpods|case|mouse|keyboard|strap|battery|earpods|\baccessor(?:y|ies)\b/i.test(value)) return null;
@@ -36,7 +41,10 @@ const formatMacLabel = (value: string) => {
   const family = familyMatch?.[1].toUpperCase() || 'Mac';
   const size = familyMatch?.[2] || '';
   const processor = value.match(/\b(?:A\d+\s*Pro|M\d+(?:\s+(?:Pro|Max|Ultra))?)\b/i)?.[0] || '';
-  const coreMatch = value.match(/\b(\d+)C\s*\/\s*(\d+)C\s*GPU\b/i);
+  
+  // CPU cores are optional to support MBAs (e.g. "10C GPU")
+  const coreMatch = value.match(/\b(?:(\d+)C\s*\/\s*)?(\d+)C\s*GPU\b/i);
+  
   const normalizeCapacity = (value: string, unit: string) => {
     const normalizedUnit = unit.toUpperCase();
     return `${value}${normalizedUnit === 'G' ? 'GB' : normalizedUnit === 'T' ? 'TB' : normalizedUnit}`;
@@ -60,8 +68,14 @@ const formatMacLabel = (value: string) => {
     : '';
   const topLine = [family, size, processor].filter(Boolean).join(' ');
   const memory = ram && storage ? `${ram}/${storage}` : ram || storage;
-  const cores = coreMatch ? `${coreMatch[1]}C CPU/${coreMatch[2]}C GPU` : '';
-  const bottomLine = [color, memory, cores].filter(Boolean).join(' - ');
+  
+  let cores = '';
+  if (coreMatch) {
+    cores = coreMatch[1] ? `${coreMatch[1]}C/${coreMatch[2]}C GPU` : `${coreMatch[2]}C GPU`;
+  }
+  
+  const specs = [cores, memory].filter(Boolean).join('/');
+  const bottomLine = [color, specs].filter(Boolean).join(' - ');
   return { topLine, bottomLine };
 };
 
@@ -79,24 +93,46 @@ const formatProductLabel = (productName: string, details: string, processorOverr
   if (/macbook\s+neo|\bneo\b|\bmbn\b/i.test(normalized)) {
     return { ...formatMacLabel(normalized.replace(/macbook\s+neo/ig, 'MBN')), needsProcessor: false };
   }
-  if (/apple\s+watch/i.test(normalized)) {
-    const watchDetails = /^apple\s+watch$/i.test(productName.trim()) ? details : normalized.replace(/apple\s+watch/ig, '');
-    return { topLine: 'Apple Watch', bottomLine: watchDetails.replace(/^[A-Z0-9]+(?:\/A)?\s+/i, '').trim(), needsProcessor: false };
+  if (/apple\s*watch/i.test(normalized)) {
+    const seriesRegex = /apple\s*watch\s*(?:series\s*)?(ultra\s*\d*|se\s*\d*|\d+)?/i;
+    const seriesMatch = normalized.match(seriesRegex);
+    const seriesRaw = seriesMatch?.[1]?.trim() || '';
+    let series = '';
+    if (/^ultra/i.test(seriesRaw)) {
+      const ultraNumber = seriesRaw.replace(/^ultra/i, '').trim();
+      series = ultraNumber ? `Ultra ${ultraNumber}` : 'Ultra';
+    } else if (/^se/i.test(seriesRaw)) {
+      const seNumber = seriesRaw.replace(/^se/i, '').trim();
+      series = seNumber ? `SE ${seNumber}` : 'SE';
+    } else {
+      series = seriesRaw;
+    }
+    const topLine = series ? `Apple Watch ${series}` : 'Apple Watch';
+
+    const strippedDetails = normalized.replace(seriesRegex, '').trim();
+    const skuPrefixExists = !/^apple\s*watch/i.test(productName.trim());
+    const bottomLine = skuPrefixExists
+      ? strippedDetails.replace(/^[A-Z0-9]+(?:\/A)?\s+/i, '').trim()
+      : strippedDetails;
+    return { topLine, bottomLine, needsProcessor: false };
   }
   if (/\bipad\b/i.test(normalized)) {
     const family = /ipad\s+pro/i.test(normalized) ? 'iPad Pro' : /ipad\s+air/i.test(normalized) ? 'iPad Air' : /ipad\s+mini/i.test(normalized) ? 'iPad mini' : 'iPad';
-    const detectedSize = normalized.match(/(\d+(?:\.\d+)?)\s*-?\s*inch/i)?.[1];
-    const size = detectedSize || (family === 'iPad Air' ? '11' : family === 'iPad' ? '11' : '');
+    
+    // Captures sizes before (13-inch iPad) OR after (iPad 13)
+    const sizeMatch = normalized.match(/(?:(\d{1,2}(?:\.\d+)?)(?:-inch)?\s+)?ipad\s*(?:pro|air|mini)?\s*(?:(\d{1,2}(?:\.\d+)?))?/i);
+    const size = sizeMatch?.[1] || sizeMatch?.[2] || '';
+    
     const processor = processorOverride.trim() || normalized.match(/\b(?:M\d|A\d+(?:\s*Pro)?)\b/i)?.[0]
       || (family === 'iPad mini' ? 'A17 Pro' : '')
-      || (size === '11' && !/air|pro|mini/i.test(normalized) ? 'A16' : '');
-    const topLine = family === 'iPad mini'
-      ? [family, processor].filter(Boolean).join(' ')
-      : [family, size, processor].filter(Boolean).join(' - ');
-    const color = normalized.match(/\b(black|blue|purple|pink|silver|starlight|space\s+gray|space\s+grey|gold|yellow)\b/i)?.[0];
+      || (size === '11' && family === 'iPad' ? 'A16' : '');
+    const topLine = [family, size].filter(Boolean).join(' ') + (processor ? ` - ${processor}` : '');
+    const colorMatch = normalized.match(/\bspace\s+(?:gray|grey|black)\b|\b(?:black|blue|purple|pink|silver|starlight|gold|yellow)\b/i);
+    const color = colorMatch ? titleCase(colorMatch[0]) : '';
     const capacity = normalized.match(/\b\d+(?:\.\d+)?\s*(?:GB|TB|G|T)\b/i)?.[0].replace(/\s+/g, '').replace(/G$/, 'GB').replace(/T$/, 'TB');
     const connectivity = /wi-?fi\s*\+\s*cell|cellular/i.test(lowerSource) ? 'WiFi + Cell' : /wi-?fi/i.test(lowerSource) ? 'WiFi' : '';
-    const bottomLine = [color, capacity && `${color ? '- ' : ''}${capacity}`, connectivity].filter(Boolean).join(' ').trim();
+    const specPart = [capacity, connectivity].filter(Boolean).join(' ');
+    const bottomLine = [color, specPart].filter(Boolean).join(' - ');
     return { topLine, bottomLine, needsProcessor: !processor };
   }
 
@@ -128,11 +164,9 @@ export default function App() {
         const buffer = event.target?.result;
         const workbook = XLSX.read(buffer, { type: 'array' });
 
-        // Grab first sheet
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
 
-        // Read rows directly so reports with a title row before the headers still work.
         const rawRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, defval: '' });
 
         if (!rawRows.length) {
@@ -141,17 +175,20 @@ export default function App() {
         }
 
         const idPatterns = [/productid/, /sku/, /partnumber/, /itemnumber/, /^item$/, /^id$/, /topline/];
-        const descPatterns = [/description/, /productname/, /itemname/, /name/, /bottomline/];
-        const amountPatterns = [/amount/, /qty/, /quantity/, /count/, /onhand/, /instock/, /available/, /stock/, /inventory/];
+        const descPatterns = [/description/, /productname/, /itemname/, /name/, /bottomline/, /למחסן/];
+        const amountPatterns = [/amount/, /qty/, /quantity/, /count/, /onhand/, /instock/, /available/, /stock/, /inventory/, /תאורמוצר/]; 
+        
         const headerIndex = rawRows.findIndex((row, index) => {
           if (index > 20) return false;
           const normalizedRow = row.map(value => normalizeHeader(String(value ?? '')));
           const matches = (patterns: RegExp[]) => normalizedRow.some(value => patterns.some(pattern => pattern.test(value)));
           return Number(matches(idPatterns)) + Number(matches(descPatterns)) + Number(matches(amountPatterns)) >= 2;
         });
+        
         const actualHeaderIndex = headerIndex >= 0 ? headerIndex : 0;
         const headers = rawRows[actualHeaderIndex].map((value, index) => String(value || `Column ${index + 1}`));
         const findColumn = (patterns: RegExp[]) => headers.findIndex(header => patterns.some(pattern => pattern.test(normalizeHeader(header))));
+        
         const idColumn = findColumn(idPatterns);
         const descColumn = findColumn(descPatterns);
         const amountColumn = findColumn(amountPatterns);
@@ -166,10 +203,19 @@ export default function App() {
           const description = String(getValue(row, descColumn, 1) ?? '').trim();
           const category = getDeviceCategory(`${productId} ${description}`);
           const label = formatProductLabel(productId, description);
-          const amount = amountColumn >= 0 ? parseAmount(getValue(row, amountColumn, 2)) : (productId ? 1 : 0);
+          
+          const rawAmount = getValue(row, amountColumn, 2);
+          const amount = (rawAmount === undefined || rawAmount === '') ? (productId ? 1 : 0) : parseAmount(rawAmount);
 
           if (productId && category && amount > 0) {
-            cleanedItems.push({ ...label, amount, category, sourceKey: `${actualHeaderIndex + rowIndex + 1}`, });
+            cleanedItems.push({ 
+              ...label, 
+              amount, 
+              category, 
+              sourceKey: `${actualHeaderIndex + rowIndex + 1}`,
+              originalId: productId,
+              originalDesc: description
+            });
             labelCount += amount;
           }
         });
@@ -211,15 +257,22 @@ export default function App() {
 
   const confirmProcessor = (sourceKey: string, processor: string) => {
     if (!processor.trim()) return;
-    setParsedData((items) => items.map((item) => item.sourceKey === sourceKey
-      ? { ...item, topLine: `${item.topLine} ${processor.trim()}`.trim(), needsProcessor: false }
-      : item));
+
+    const updateItem = (item: ParsedItem) => {
+      if (item.sourceKey === sourceKey) {
+        const updatedLabel = formatProductLabel(item.originalId, item.originalDesc, processor);
+        return { ...item, ...updatedLabel, needsProcessor: false };
+      }
+      return item;
+    };
+
+    setPendingData((items) => items.map(updateItem));
+    setParsedData((items) => items.map(updateItem));
   };
 
   const handleExport = () => {
     if (!parsedData.length) return;
 
-    // Multiply rows by the amount specified
     const flattenedRows: { TopLine: string; BottomLine: string }[] = [];
 
     parsedData.forEach((item) => {
@@ -231,7 +284,6 @@ export default function App() {
       }
     });
 
-    // Create workbook and export
     const worksheet = XLSX.utils.json_to_sheet(flattenedRows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'DYMO_Labels');
