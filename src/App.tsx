@@ -30,9 +30,9 @@ const titleCase = (value: string) =>
 
 const getDeviceCategory = (value: string): DeviceCategory | null => {
   if (/charger|cable|adapter|pencil|airpods|case|mouse|keyboard|strap|battery|earpods|\baccessor(?:y|ies)\b/i.test(value)) return null;
-  if (/\bipad\b/i.test(value)) return 'iPad';
-  if (/apple\s+watch/i.test(value)) return 'Apple Watch';
-  if (/macbook|\bmbp\b|\bmba\b|\bmbn\b/i.test(value)) return 'Mac';
+  if (/\bipad\b|אייפד/i.test(value)) return 'iPad';
+  if (/apple\s+watch|אפל\s*ווטש|אפל\s*וואטש/i.test(value)) return 'Apple Watch';
+  if (/macbook|\bmbp\b|\bmba\b|\bmbn\b|מקבוק|מק\s*פרו|מק\s*אייר/i.test(value)) return 'Mac';
   return null;
 };
 
@@ -62,7 +62,7 @@ const formatMacLabel = (value: string) => {
   const storage = ramAndStorage[1] || '';
   const colorSource = family === 'MBN'
     ? value.match(/\b(IND|BLS|CIT|SLV|indigo|blue|blush|pink|citrus|yellow|silver)\b/i)?.[1]
-    : value.match(/\b(SB|SLV|STL|SKY|MDN|IND|BLS|CIT)\b/i)?.[1];
+    : value.match(/\b(SB|SL|SLV|STL|SKY|MDN|IND|BLS|CIT)\b/i)?.[1];
   const color = colorSource
     ? ({ indigo: 'IND', blue: 'IND', blush: 'BLS', pink: 'BLS', citrus: 'CIT', yellow: 'CIT', silver: 'SLV' }[colorSource.toLowerCase()] || colorSource.toUpperCase())
     : '';
@@ -97,16 +97,17 @@ const formatProductLabel = (productName: string, details: string, processorOverr
     const seriesRegex = /apple\s*watch\s*(?:series\s*)?(ultra\s*\d*|se\s*\d*|\d+)?/i;
     const seriesMatch = normalized.match(seriesRegex);
     const seriesRaw = seriesMatch?.[1]?.trim() || '';
-    let series = '';
-    if (/^ultra/i.test(seriesRaw)) {
+    const series = /^ultra/i.test(seriesRaw)
+      ? (() => {
       const ultraNumber = seriesRaw.replace(/^ultra/i, '').trim();
-      series = ultraNumber ? `Ultra ${ultraNumber}` : 'Ultra';
-    } else if (/^se/i.test(seriesRaw)) {
+      return ultraNumber ? `Ultra ${ultraNumber}` : 'Ultra';
+    })()
+      : /^se/i.test(seriesRaw)
+        ? (() => {
       const seNumber = seriesRaw.replace(/^se/i, '').trim();
-      series = seNumber ? `SE ${seNumber}` : 'SE';
-    } else {
-      series = seriesRaw;
-    }
+      return seNumber ? `SE ${seNumber}` : 'SE';
+    })()
+        : seriesRaw;
     const topLine = series ? `Apple Watch ${series}` : 'Apple Watch';
 
     const strippedDetails = normalized.replace(seriesRegex, '').trim();
@@ -174,9 +175,9 @@ export default function App() {
           return;
         }
 
-        const idPatterns = [/productid/, /sku/, /partnumber/, /itemnumber/, /^item$/, /^id$/, /topline/];
-        const descPatterns = [/description/, /productname/, /itemname/, /name/, /bottomline/, /למחסן/];
-        const amountPatterns = [/amount/, /qty/, /quantity/, /count/, /onhand/, /instock/, /available/, /stock/, /inventory/, /תאורמוצר/]; 
+        const idPatterns = [/productid/, /sku/, /partnumber/, /itemnumber/, /^item$/, /^id$/, /topline/, /מקט/, /פריט/];
+        const descPatterns = [/description/, /productname/, /itemname/, /name/, /bottomline/, /למחסן/, /תאורמוצר/, /תיאורמוצר/, /תאור/, /תיאור/, /שםמוצר/];
+        const amountPatterns = [/amount/, /qty/, /quantity/, /count/, /onhand/, /instock/, /available/, /stock/, /inventory/, /כמות/, /מלאי/, /יתרה/];
         
         const headerIndex = rawRows.findIndex((row, index) => {
           if (index > 20) return false;
