@@ -31,7 +31,7 @@ const titleCase = (value: string) =>
 const getDeviceCategory = (value: string): DeviceCategory | null => {
   if (/charger|cable|adapter|pencil|airpods|case|mouse|keyboard|strap|battery|earpods|\baccessor(?:y|ies)\b/i.test(value)) return null;
   if (/\bipad\b|אייפד/i.test(value)) return 'iPad';
-  if (/apple\s+watch|אפל\s*ווטש|אפל\s*וואטש/i.test(value)) return 'Apple Watch';
+  if (/\b(?:apple\s+)?watch\s+(?:series\s*)?\d+|\b(?:apple\s+)?watch\s+ultra(?:\s*\d+)?|\b(?:apple\s+)?watch\s+se(?:\s*\d+)?|אפל\s*ווטש|אפל\s*וואטש/i.test(value)) return 'Apple Watch';
   if (/macbook|\bmbp\b|\bmba\b|\bmbn\b|מקבוק|מק\s*פרו|מק\s*אייר/i.test(value)) return 'Mac';
   return null;
 };
@@ -93,8 +93,8 @@ const formatProductLabel = (productName: string, details: string, processorOverr
   if (/macbook\s+neo|\bneo\b|\bmbn\b/i.test(normalized)) {
     return { ...formatMacLabel(normalized.replace(/macbook\s+neo/ig, 'MBN')), needsProcessor: false };
   }
-  if (/apple\s*watch/i.test(normalized)) {
-    const seriesRegex = /apple\s*watch\s*(?:series\s*)?(ultra\s*\d*|se\s*\d*|\d+)?/i;
+  if (/\b(?:apple\s*)?watch\s+(?:series\s*)?(?:ultra\s*\d*|se\s*\d*|\d+)/i.test(normalized)) {
+    const seriesRegex = /(?:apple\s*)?watch\s*(?:series\s*)?(ultra\s*\d*|se\s*\d*|\d+)/i;
     const seriesMatch = normalized.match(seriesRegex);
     const seriesRaw = seriesMatch?.[1]?.trim() || '';
     const series = /^ultra/i.test(seriesRaw)
@@ -111,7 +111,7 @@ const formatProductLabel = (productName: string, details: string, processorOverr
     const topLine = series ? `Apple Watch ${series}` : 'Apple Watch';
 
     const strippedDetails = normalized.replace(seriesRegex, '').trim();
-    const skuPrefixExists = !/^apple\s*watch/i.test(productName.trim());
+    const skuPrefixExists = !/^(?:apple\s*)?watch/i.test(productName.trim());
     const bottomLine = skuPrefixExists
       ? strippedDetails.replace(/^[A-Z0-9]+(?:\/A)?\s+/i, '').trim()
       : strippedDetails;
@@ -176,15 +176,23 @@ export default function App() {
         }
 
         const idPatterns = [/productid/, /sku/, /partnumber/, /itemnumber/, /^item$/, /^id$/, /topline/, /מקט/, /פריט/];
-        const descPatterns = [/description/, /productname/, /itemname/, /name/, /bottomline/, /למחסן/, /תאורמוצר/, /תיאורמוצר/, /תאור/, /תיאור/, /שםמוצר/];
+        const descPatterns = [/description/, /productname/, /itemname/, /name/, /bottomline/, /תאורמוצר/, /תיאורמוצר/, /תאור/, /תיאור/, /שםמוצר/];
         const amountPatterns = [/amount/, /qty/, /quantity/, /count/, /onhand/, /instock/, /available/, /stock/, /inventory/, /כמות/, /מלאי/, /יתרה/];
         
-        const headerIndex = rawRows.findIndex((row, index) => {
-          if (index > 20) return false;
+        const headerCandidates = rawRows.slice(0, 21).map((row, index) => {
           const normalizedRow = row.map(value => normalizeHeader(String(value ?? '')));
-          const matches = (patterns: RegExp[]) => normalizedRow.some(value => patterns.some(pattern => pattern.test(value)));
-          return Number(matches(idPatterns)) + Number(matches(descPatterns)) + Number(matches(amountPatterns)) >= 2;
+          const findMatch = (patterns: RegExp[]) => normalizedRow.findIndex(value => patterns.some(pattern => pattern.test(value)));
+          const columns = [findMatch(idPatterns), findMatch(descPatterns), findMatch(amountPatterns)];
+          return {
+            index,
+            matchCount: columns.filter(column => column >= 0).length,
+            positionScore: columns.filter(column => column >= 0).reduce((total, column) => total + column, 0),
+          };
         });
+        const bestHeader = headerCandidates
+          .filter(candidate => candidate.matchCount >= 2)
+          .sort((a, b) => b.matchCount - a.matchCount || a.positionScore - b.positionScore)[0];
+        const headerIndex = bestHeader?.index ?? -1;
         
         const actualHeaderIndex = headerIndex >= 0 ? headerIndex : 0;
         const headers = rawRows[actualHeaderIndex].map((value, index) => String(value || `Column ${index + 1}`));
