@@ -28,22 +28,31 @@ const parseAmount = (value: unknown) => {
 const titleCase = (value: string) =>
   value.replace(/\s+/g, ' ').trim().replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
 
+const isCompleteIpadDescription = (value: string) => {
+  const hasIpad = /\bipad\b|אייפד/i.test(value);
+  const hasSize = /\b\d{1,2}(?:\.\d+)?\s*(?:-?inch|["”])?\b/i.test(value);
+  const hasStorage = /\b\d+(?:\.\d+)?\s*(?:GB|TB|G|T)\b/i.test(value);
+  const hasColor = /\b(?:space\s+(?:gray|grey|black)|gray|grey|black|blue|purple|pink|silver|starlight|gold|yellow|green)\b/i.test(value);
+  const hasConnectivity = /\bwi-?fi\b|\b(?:cell(?:ular)?|cel)\b/i.test(value);
+  return hasIpad && hasSize && hasStorage && hasColor && hasConnectivity;
+};
+
 const getDeviceCategory = (value: string): DeviceCategory | null => {
-  if (/charger|cable|adapter|pencil|airpods|case|mouse|keyboard|strap|battery|earpods|\baccessor(?:y|ies)\b/i.test(value)) return null;
-  if (/\bipad\b|אייפד/i.test(value)) return 'iPad';
+  if (/charger|cable|adapter|pencil|airpods|case|mouse|keyboard|\bkb\b|strap|battery|earpods|folio|\baccessor(?:y|ies)\b/i.test(value)) return null;
+  if (isCompleteIpadDescription(value)) return 'iPad';
   if (/\b(?:apple\s+)?watch\s+(?:series\s*)?\d+|\b(?:apple\s+)?watch\s+ultra(?:\s*\d+)?|\b(?:apple\s+)?watch\s+se(?:\s*\d+)?|אפל\s*ווטש|אפל\s*וואטש/i.test(value)) return 'Apple Watch';
-  if (/macbook|\bmbp\b|\bmba\b|\bmbn\b|מקבוק|מק\s*פרו|מק\s*אייר/i.test(value)) return 'Mac';
+  if (/macbook|mac\s+mini|\bmbp\b|\bmba\b|\bmbn\b|מקבוק|מק\s*פרו|מק\s*אייר/i.test(value)) return 'Mac';
   return null;
 };
 
 const formatMacLabel = (value: string) => {
-  const familyMatch = value.match(/\b(MBP|MBA|MBN)\s+(\d+)/i);
-  const family = familyMatch?.[1].toUpperCase() || 'Mac';
+  const familyMatch = value.match(/\b(MBP|MBA|MBN)\s*(\d{1,2}(?:\.\d+)?)\s*(?:-?inch)?/i);
+  const family = familyMatch?.[1].toUpperCase() || ( /\bmac\s+mini\b/i.test(value) ? 'Mac mini' : 'Mac');
   const size = familyMatch?.[2] || '';
   const processor = value.match(/\b(?:A\d+\s*Pro|M\d+(?:\s+(?:Pro|Max|Ultra))?)\b/i)?.[0] || '';
   
   // CPU cores are optional to support MBAs (e.g. "10C GPU")
-  const coreMatch = value.match(/\b(?:(\d+)C\s*\/\s*)?(\d+)C\s*GPU\b/i);
+  const coreMatch = value.match(/\b(?:(\d+)(?:C|-core)\s*(?:CPU\s*)?\/\s*)?(\d+)(?:C|-core)\s*GPU\b/i);
   
   const normalizeCapacity = (value: string, unit: string) => {
     const normalizedUnit = unit.toUpperCase();
@@ -81,7 +90,7 @@ const formatMacLabel = (value: string) => {
 
 const formatProductLabel = (productName: string, details: string, processorOverride = '') => {
   const source = `${productName} ${details}`.replace(/\s+/g, ' ').trim();
-  const normalized = source.replace(/[‐‑‒–—]/g, '-');
+  const normalized = source.replace(/[‐‑‒–—]/g, '-').replace(/[(),]/g, ' ');
   const lowerSource = normalized.toLowerCase();
 
   if (/macbook\s+pro|\bmbp\b/i.test(normalized)) {
@@ -92,6 +101,9 @@ const formatProductLabel = (productName: string, details: string, processorOverr
   }
   if (/macbook\s+neo|\bneo\b|\bmbn\b/i.test(normalized)) {
     return { ...formatMacLabel(normalized.replace(/macbook\s+neo/ig, 'MBN')), needsProcessor: false };
+  }
+  if (/\bmac\s+mini\b/i.test(normalized)) {
+    return { ...formatMacLabel(normalized), needsProcessor: false };
   }
   if (/\b(?:apple\s*)?watch\s+(?:series\s*)?(?:ultra\s*\d*|se\s*\d*|\d+)/i.test(normalized)) {
     const seriesRegex = /(?:apple\s*)?watch\s*(?:series\s*)?(ultra\s*\d*|se\s*\d*|\d+)/i;
@@ -121,14 +133,14 @@ const formatProductLabel = (productName: string, details: string, processorOverr
     const family = /ipad\s+pro/i.test(normalized) ? 'iPad Pro' : /ipad\s+air/i.test(normalized) ? 'iPad Air' : /ipad\s+mini/i.test(normalized) ? 'iPad mini' : 'iPad';
     
     // Captures sizes before (13-inch iPad) OR after (iPad 13)
-    const sizeMatch = normalized.match(/(?:(\d{1,2}(?:\.\d+)?)(?:-inch)?\s+)?ipad\s*(?:pro|air|mini)?\s*(?:(\d{1,2}(?:\.\d+)?))?/i);
+    const sizeMatch = normalized.match(/(?:(\d{1,2}(?:\.\d+)?)\s*(?:-?inch|["”])?\s+)?ipad\s*(?:pro|air|mini)?\s*(?:(\d{1,2}(?:\.\d+)?)\s*(?:-?inch|["”])?)?/i);
     const size = sizeMatch?.[1] || sizeMatch?.[2] || '';
     
     const processor = processorOverride.trim() || normalized.match(/\b(?:M\d|A\d+(?:\s*Pro)?)\b/i)?.[0]
       || (family === 'iPad mini' ? 'A17 Pro' : '')
       || (size === '11' && family === 'iPad' ? 'A16' : '');
     const topLine = [family, size].filter(Boolean).join(' ') + (processor ? ` - ${processor}` : '');
-    const colorMatch = normalized.match(/\bspace\s+(?:gray|grey|black)\b|\b(?:black|blue|purple|pink|silver|starlight|gold|yellow)\b/i);
+    const colorMatch = normalized.match(/\bspace\s+(?:gray|grey|black)\b|\b(?:gray|grey|black|blue|purple|pink|silver|starlight|gold|yellow)\b/i);
     const color = colorMatch ? titleCase(colorMatch[0]) : '';
     const capacity = normalized.match(/\b\d+(?:\.\d+)?\s*(?:GB|TB|G|T)\b/i)?.[0].replace(/\s+/g, '').replace(/G$/, 'GB').replace(/T$/, 'TB');
     const connectivity = /wi-?fi\s*\+\s*cell|cellular/i.test(lowerSource) ? 'WiFi + Cell' : /wi-?fi/i.test(lowerSource) ? 'WiFi' : '';
@@ -194,26 +206,52 @@ export default function App() {
           .sort((a, b) => b.matchCount - a.matchCount || a.positionScore - b.positionScore)[0];
         const headerIndex = bestHeader?.index ?? -1;
         
-        const actualHeaderIndex = headerIndex >= 0 ? headerIndex : 0;
-        const headers = rawRows[actualHeaderIndex].map((value, index) => String(value || `Column ${index + 1}`));
+        const actualHeaderIndex = headerIndex >= 0 ? headerIndex : -1;
+        const headers = actualHeaderIndex >= 0
+          ? rawRows[actualHeaderIndex].map((value, index) => String(value || `Column ${index + 1}`))
+          : [];
         const findColumn = (patterns: RegExp[]) => headers.findIndex(header => patterns.some(pattern => pattern.test(normalizeHeader(header))));
         
         const idColumn = findColumn(idPatterns);
         const descColumn = findColumn(descPatterns);
         const amountColumn = findColumn(amountPatterns);
-        const dataRows = rawRows.slice(actualHeaderIndex + 1);
+        const dataRows = actualHeaderIndex >= 0 ? rawRows.slice(actualHeaderIndex + 1) : rawRows;
+        const inferredColumns = actualHeaderIndex >= 0 ? null : (() => {
+          const sampleRows = dataRows.slice(0, 20);
+          const columnCount = Math.max(...sampleRows.map(row => row.length), 0);
+          const scores = Array.from({ length: columnCount }, (_, column) => {
+            const values = sampleRows.map(row => String(row[column] ?? '').trim()).filter(Boolean);
+            const numericCount = values.filter(value => Number.isFinite(Number(value.replace(/,/g, '')))).length;
+            const descriptionCount = values.filter(value => /[a-zא-ת].*[ -].*[a-zא-ת]/i.test(value)).length;
+            const idCount = values.filter(value => /[A-Z0-9]+(?:\/[A-Z])?$/i.test(value) && !/\s/.test(value)).length;
+            return { column, numericCount, descriptionCount, idCount };
+          });
+          const inferredAmountColumn = scores
+            .filter(score => score.numericCount > 0)
+            .sort((a, b) => b.numericCount - a.numericCount)[0]?.column ?? -1;
+          const inferredDescColumn = scores
+            .filter(score => score.column !== inferredAmountColumn)
+            .sort((a, b) => b.descriptionCount - a.descriptionCount)[0]?.column ?? -1;
+          const inferredIdColumn = scores
+            .filter(score => score.column !== inferredAmountColumn && score.column !== inferredDescColumn)
+            .sort((a, b) => b.idCount - a.idCount)[0]?.column ?? -1;
+          return { idColumn: inferredIdColumn, descColumn: inferredDescColumn, amountColumn: inferredAmountColumn };
+        })();
+        const resolvedIdColumn = idColumn >= 0 ? idColumn : inferredColumns?.idColumn ?? -1;
+        const resolvedDescColumn = descColumn >= 0 ? descColumn : inferredColumns?.descColumn ?? -1;
+        const resolvedAmountColumn = amountColumn >= 0 ? amountColumn : inferredColumns?.amountColumn ?? -1;
         const getValue = (row: unknown[], column: number, fallbackColumn: number) => row[column >= 0 ? column : fallbackColumn];
 
         let labelCount = 0;
         const cleanedItems: ParsedItem[] = [];
 
         dataRows.forEach((row, rowIndex) => {
-          const productId = String(getValue(row, idColumn, 0) ?? '').trim();
-          const description = String(getValue(row, descColumn, 1) ?? '').trim();
+          const productId = String(getValue(row, resolvedIdColumn, 0) ?? '').trim();
+          const description = String(getValue(row, resolvedDescColumn, 1) ?? '').trim();
           const category = getDeviceCategory(`${productId} ${description}`);
           const label = formatProductLabel(productId, description);
           
-          const rawAmount = getValue(row, amountColumn, 2);
+          const rawAmount = getValue(row, resolvedAmountColumn, 2);
           const amount = (rawAmount === undefined || rawAmount === '') ? (productId ? 1 : 0) : parseAmount(rawAmount);
 
           if (productId && category && amount > 0) {
@@ -221,7 +259,7 @@ export default function App() {
               ...label, 
               amount, 
               category, 
-              sourceKey: `${actualHeaderIndex + rowIndex + 1}`,
+              sourceKey: `${actualHeaderIndex >= 0 ? actualHeaderIndex + rowIndex + 1 : rowIndex + 1}`,
               originalId: productId,
               originalDesc: description
             });
